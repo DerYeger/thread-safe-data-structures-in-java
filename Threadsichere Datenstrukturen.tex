@@ -1,0 +1,450 @@
+\documentclass[a4paper, 11pt]{article}
+
+\usepackage[%
+	backend = biber,
+	sortlocale=de_DE,
+	natbib=true,
+	style = numeric,
+	autocite = superscript
+]{biblatex}
+\addbibresource{references.bib}
+\DeclareCiteCommand{\supercite}[\mkbibsuperscript]{}
+{\bibopenbracket%
+	\usebibmacro{citeindex}%
+	\usebibmacro{cite}%
+	\usebibmacro{postnote}%
+	\bibclosebracket}
+{\supercitedelim}
+{}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\sectionmark}[1]{\markboth{#1}{}}
+\fancyhead[ER]{\rightmark}
+\fancyhead[OL]{\nouppercase{\leftmark}}
+\cfoot{\thepage}
+
+\usepackage{float}
+\newfloat{lstfloat}{htb}{lop}
+
+\usepackage[ngerman]{isodate, babel}
+
+\usepackage{hyperref}
+\addto\extrasngerman{
+	\renewcommand{\sectionautorefname}{Kapitel}
+	\renewcommand{\subsectionautorefname}{Abschnitt}
+	\renewcommand{\subsubsectionautorefname}{Unterabschnitt}
+}
+
+\usepackage{listings, xcolor}
+\renewcommand{\lstlistingname}{Quelltext}
+\definecolor{commentcolor}{RGB}{0, 200, 30}
+\lstset{
+	language = Java,
+	tabsize = 2,
+	showstringspaces = false,
+	numbers = left,
+	commentstyle = \color{commentcolor},
+	keywordstyle = \color{blue},
+	stringstyle = \color{red},
+	rulecolor = \color{black},
+	basicstyle = \scriptsize \ttfamily ,
+	breaklines = true,
+	numberstyle = \tiny,
+	captionpos=b,
+	frame=single,
+	xleftmargin=.04\textwidth,
+}
+\lstset{literate=%
+	{Ö}{{\"O}}1
+	{Ä}{{\"A}}1
+	{Ü}{{\"U}}1
+	{ß}{{\"s}}1
+	{ü}{{\"u}}1
+	{ä}{{\"a}}1
+	{ö}{{\"o}}1
+	{~}{{\textasciitilde}}1
+}
+
+\usepackage{program}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+\overfullrule=1mm
+
+\title{Threadsichere Datenstrukturen in Java}
+\author{Jan Müller}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+
+\section{Einleitung}
+\label{sec:introduction}
+
+Threadsicherheit im Kontext von Datenstrukturen bedeutet, dass parallel stattfindende Lese- und Schreibzugriffe ohne Wettlaufsituationen und Inkonsistenzen erfolgen.
+In Java ist dies nur der Fall, wenn bestimmte Speichereigenschaften und Synchronisationsbedingungen berücksichtigt werden.
+Javas Standardbibliothek enthält deshalb eine umfangreiche Sammlung an
+ Datenstrukturen sowie Schnittstellen, welche threadsichere Programmierung ermöglichen.
+
+Diese Ausarbeitung stellt verschiedene Ansätze der Standardbibliothek vor und geht dabei auf Eigenschaften, Verwendung sowie Einsatzgebiete threadsicherer \verb|Atomic|-Klassen und \textit{Collections} ein.
+Diese benötigen weder zusätzliche Synchronisation noch kritische Abschnitte.
+Darüber hinaus werden Grundbausteine der Implementierung neuer threadsicherer Datenstrukturen erläutert.
+Dazu gehören das Schlüsselwort \verb|volatile| und dessen Auswirkungen auf die Sichtbarkeit von Schreibzugriffen sowie die sperrfreien Synchronisationsmechanismen der \textit{Variable Handles}.
+Letztere ermöglichen zudem eine threadsichere Verwendung externer Klassen.
+
+\autoref{sec:volatile} erklärt das Schlüsselwort \verb|volatile|.
+\textit{Variable Handles} werden in \autoref{sec:variablehandles} behandelt.
+\autoref{sec:atomic} thematisiert die \verb|Atomic|-Klassen.
+In \autoref{sec:collections} werden threadsichere \textit{Collections} der Java Standardbibliothek vorgestellt.
+Zuletzt fasst \autoref{sec:summary} die Ausarbeitung zusammen.
+
+\section{Das Schlüsselwort volatile}
+\label{sec:volatile}
+
+In Java sind Schreibzugriffe nicht immer für andere Threads sichtbar, da sie aus Optimierungsgründen \textit{threadlokal} zwischengespeichert werden können.
+Das Schlüsselwort \verb|volatile| bildet als Modifikator für Attribute die Grundlage für threadsichere Datenstrukturen.
+
+\subsection{Eigenschaften}
+\label{subsec:volatile:properties}
+
+Zugriffe auf Attribute mit dem Modifikator \verb|volatile| (siehe \autoref{lst:volatile:example}) finden sequentiell statt.
+Ferner garantiert \verb|volatile| die Sichtbarkeit von Schreibzugriffen für alle Threads.
+Für diese Garantie wird \textit{threadlokaler Cache} nach Schreibzugriffen \textit{geflushed} und \textit{Caching} von \verb|volatile|-""Attributen verhindert, weshalb \verb|volatile|-Zugriffe in der Regel langsamer sind.
+Es gilt zu beachten, dass sich \verb|volatile| bei nicht-primitiven Typen nur auf Referenzen, nicht deren Felder oder Elemente, bezieht.
+
+Seit Java 5 werden Änderungen an regulären Variablen bei nachfolgenden \verb|volatile|-""Schreibzugriffen ebenfalls sichtbar gemacht.
+Andere Threads können solche Änderungen sehen, nachdem sie einen \verb|volatile|-Lesezugriff durchführt haben.
+Ferner nimmt der Java Compiler keine Umsortierung solcher Zugriffe vor, wodurch eine \textit{Happens-Before}-Beziehung\autocite{cookbook} entsteht, aber auch eine weitere Optimierung entfällt.
+
+Der \verb|volatile|-Modifikator garantiert noch keine Threadsicherheit, sondern nur Sichtbarkeit von Zugriffen.
+In- und Dekrementoperationen sind bei numerischen \verb|volatile|-""Attributen beispielsweise nicht threadsicher, da sie mehrere Zugriffe benötigen, zwischen denen andere Threads Schreibzugriffe durchführen können.
+Um daraus resultierende Wettlaufsituationen zu vermeiden bedarf es zusätzlicher Synchronisationsmechanismen.
+
+\begin{lstfloat}
+	\begin{lstlisting}[label={lst:volatile:example}, caption={Klasse mit volatile Attributen}]
+class MyClass {
+	static volatile int classAttribute = 0;
+	volatile int instanceAttribute = 0;
+}	
+	\end{lstlisting}
+\end{lstfloat}
+
+\subsection{Weitere Speichermodi}
+\label{subsec:volatile:mode}
+
+Neben regulären und \verb|volatile|-Zugriffen existieren weitere Speicherzugriffsmodi, die in dieser Ausarbeitung jedoch nicht betrachtet werden\autocite{memorymodes}.
+\textit{Variable Handles} (siehe \autoref{sec:variablehandles}) und \verb|Atomic|-Klassen (siehe \autoref{sec:atomic}) bieten \textit{Getter} und \textit{Setter} für alle Zugriffsmodi.
+
+
+\section{Variable Handles}
+\label{sec:variablehandles}
+
+Java 9 erweitert die Standardbibliothek um systemnahe \textit{Variable Handles}\autocite{javadoc:varhandle}.
+Diese bieten sperrfreie Synchronisationsmechanismen, die zusammen mit der Sichtbarkeitsgarantie von \verb|volatile|-Zugriffen performante threadsichere Datenstrukturen ermöglichen.
+Ferner können \textit{Variable Handles} für threadsichere Zugriffe auf reguläre Variablen externer Klassen verwendet werden.
+Somit ist eine threadsichere Weiterverwendung von bestehendem \textit{Code} möglich.
+
+Eine \verb|VarHandle|-Instanz ist eine getypte Referenz auf ein Attribut oder Arrayelemente.
+Über sie kann atomar und mit verschiedenen Speicherzugriffsmodi auf Variablen zugegriffen werden.
+Methoden der Klasse \verb|VarHandle| sind nativ, das hei"st ihre Implementierungen basieren nicht auf Java und sind plattformspezifisch.
+
+\subsection{Verwendung}
+\label{subsec:variablehandles:usage}
+
+\verb|VarHandle|-Instanzen werden über statische Methoden erzeugt.
+Für optimale Laufzeitperformanz sollten \verb|VarHandle|-Variablen als \verb|static| \verb|final| Attribute deklariert und in \verb|static|-Blöcken initialisiert werden\autocite{jep193}.
+
+\verb|VarHandle| stellt Methoden für atomare \textit{Compare-and-Set}-, Additions- und Bit-Operationen zur Verfügung.
+Eine Anwendung von Methoden auf inkompatible Typen, wie beispielsweise \verb|getAndAdd()| bei nicht numerischen Variablen, führt zu Ausnahmen während der Laufzeit.
+
+Variable Argumentlisten und Rückgabewerte von \verb|VarHandle|-Methoden haben den Typ \verb|Object|.
+Infolgedessen gibt es keine Typsicherheit zur Kompilierzeit und invalide Verwendung löst entsprechende Ausnahmen aus.
+
+In \autoref{lst:variablehandles:usage:example} ist ein threadsicherer Zähler auf \verb|VarHandle|-Basis zu sehen.
+Die erzeugte \verb|VarHandle|-Instanz (siehe Zeilen 11 und 12) wird zum threadsicheren Inkrementieren (siehe Zeile 22) und Lesen per \verb|volatile|-Zugriff (siehe Zeile 20) verwendet.
+
+
+\begin{lstfloat}
+	\begin{lstlisting}[label={lst:variablehandles:usage:example}, caption={Threadsicherer Zähler mit Variable Handles}]
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+
+class Counter {
+	private static final VarHandle COUNTER;
+	
+	static {
+		try {
+			// MethodHandles.privateLookupIn() für private Attribute in externen Klassen
+			// findStaticVarHandle() für statische Attribute
+			COUNTER = MethodHandles.lookup()
+				.findVarHandle(Counter.class, "counter", long.class);
+		} catch (NoSuchFieldException | IllegalAccessException e) {
+			throw new Error(e);
+		}
+	}
+	
+	private long counter = 0;
+	
+	long get() { return (long) COUNTER.getVolatile(this); }
+	
+	void increment() { COUNTER.getAndAdd(this, 1); }
+}	
+	\end{lstlisting}
+\end{lstfloat}
+
+\subsection{Verwendung für Arrays}
+\label{subsec:variablehandles:usagearray}
+
+\verb|VarHandle|-Instanzen für Arrays können mit Hilfe der Klasse \verb|MethodHandles| und ihrer statischen Methode \verb|arrayElementVarHandle()| erzeugt werden.
+Als einzigen Parameter erhält sie einen Array-Typ.
+\autoref{lst:variablehandles:usagearray:example} zeigt Argumentübergaben bei \verb|VarHandle|-Methoden für Arrays.
+
+\begin{lstfloat}
+	\begin{lstlisting}[label={lst:variablehandles:usagearray:example}, caption={Variable Handles für Arrays}]
+int[] array = new int[10];
+// Erstellt VarHandle-Instanz für int-Arrays
+VarHandle AVH = MethodHandles.arrayElementVarHandle(int[].class);
+// Liest Wert an Index 4
+int value = (int) AVH.getVolatile(array, 4);
+// Erhöht Wert an Index 2 um 10
+AVH.getAndAdd(array, 2, 10);
+// Setzt Wert an Index 1 auf 2, falls er 4 ist
+AVH.compareAndSet(array, 1, 4, 2);
+	\end{lstlisting}
+\end{lstfloat}
+
+\subsection{Vorteile gegenüber sperrbasierter Synchronisation}
+\label{subsec:variablehandles:advantages}
+
+\textit{Variable Handles} haben dank ihrer systemnahen Methoden und nativen \textit{Compare-and-Set}-Mechanismen einen geringeren \textit{Overhead} als sperrbasierte Synchronisationsmechanismen, wie beispielsweise \textit{Locks} oder \verb|synchronized|-Blöcke.
+Zudem vermeiden sie \textit{Deadlocks} gänzlich, wodurch das Implementieren von Algorithmen vereinfacht wird.
+
+\section{Atomic-Datenstrukturen}
+\label{sec:atomic}
+
+\textit{Variable Handles} (siehe \autoref{sec:variablehandles}) sind umständlich und auf Grund fehlender Typsicherheit zur Kompilierzeit fehleranfällig.
+Javas Standardbibliothek stellt mit dem Paket \verb|java.util.concurrent.atomic| deshalb \verb|Atomic|-Datenstrukturen zur Verfügung, die einen Teil der \verb|VarHandle|-""Funktionalität, mit Typsicherheit zur Kompilierzeit und weniger \textit{Boilerplate}, zugänglich machen.\footnote{\verb|AtomicLong| und \verb|AtomicInteger| basieren auf der Klasse \verb|Unsafe| mit vergleichbaren Mechanismen (Stand OpenJDK 13.0.1.9).}
+Es existieren \verb|Atomic|-Klassen für Variablen und Arrays.
+Im Gegensatz zu \textit{Variable Handles} sind sie für höhere Abstraktionsebenen geeignet.
+
+\subsection{Verwendung}
+\label{subsec:atomic:usage}
+
+\verb|AtomicBoolean|, \verb|AtomicLong|, \verb|AtomicInteger| und \verb|AtomicReference|\footnote{\verb|AtomicReference| ist eine generische Klasse für beliebige Referenzen.} bieten einen Teil der \verb|VarHandle|-Funktionalität (siehe \autoref{subsec:variablehandles:usage}) und verwalten jeweils eine interne Variable entsprechenden Typs.
+Es ist zu beachten, dass \verb|get()| und \verb|set()|, anders als bei \verb|VarHandle|, \verb|volatile|-Zugriffe sind.
+Atomare Operationen sind über Methoden wie \verb|compareAndSet()|, \verb|getAndSet()| oder \verb|getAndUpdate()| möglich.
+\verb|AtomicLong| und \verb|AtomicInteger| besitzen darüber hinaus Methoden für atomares Addieren, Inkrementieren und Dekrementieren.
+\autoref{lst:atomic:example} zeigt eine Verwendung von \verb|AtomicLong|.
+
+\begin{lstfloat}
+	\begin{lstlisting}[label={lst:atomic:example}, caption={Verwendung von AtomicLong}]
+// Erzeugt AtomicLong-Instanz mit Startwert 1
+AtomicLong atomicLong = new AtomicLong(1);
+// Inkrementiert Wert analog zum Postinkrementoperator
+atomicLong.getAndIncrement();
+// Setzt Wert auf 3, falls er 2 ist
+atomicLong.compareAndSet(2, 3);
+// Verdoppelt Wert und gibt Ergebnis zurück
+atomicLong.updateAndGet(oldValue -> 2 * oldValue);
+// Liest Wert mit volatile-Zugriff
+long value = atomicLong.get();
+	\end{lstlisting}
+\end{lstfloat}
+
+\subsection{Verwendung von Atomic-Arrays}
+\label{subsec:atomic:usagearray}
+
+Eine threadsichere Verwendung von Arrays wird durch \verb|AtomicLongArray|, \verb|AtomicIntegerArray| und \verb|AtomicReferenceArray| ermöglicht.
+Alle Methoden dieser Klassen, mit Ausnahme der Konstruktoren und \verb|length()|, benötigen einen zusätzlichen Parameter, der den Index von Zugriffen angibt.
+Ihren Konstruktoren muss entweder die Länge interner Arrays oder ein Array entsprechenden Typs übergeben werden, welches anschließend geklont wird.
+Analog zu numerischen \verb|Atomic|-Klassen aus \autoref{subsec:atomic:usage} verfügen auch \verb|AtomicLongArray| und \verb|AtomicIntegerArray| über Methoden für numerische atomare Operationen.
+
+\subsection{Alternativen}
+\label{subsec:atomic:alternatives}
+
+\verb|LongAdder| und \verb|LongAccumulator| sowie äquivalente Klassen für den Typ \verb|double| sind hochperformante Alternativen zu den numerischen \verb|Atomic|-""Klassen.
+Anstelle einzelner Felder verwenden sie Arrays von \textit{Zellen}, die jeweils atomare Zugriffe auf \verb|VarHandle|-Basis unterstützen.
+Schreibzugriffe werden auf Zellen verteilt, um ihre Operationsdauer zu reduzieren.
+Dementsprechend sind diese Klassen performanter als ihre \verb|Atomic|-""Alternativen\footnote{Für den Typ \verb|double| muss \verb|AtomicReference| mit \textit{Boxing} verwendet werden.}, jedoch mit eingeschränktem Methodenumfang.
+Es existieren unter anderem keine Methoden für verschiedene Zugriffsmodi und Aktualisierung von Werten analog zu \verb|updateAndGet()|.
+Ebenfalls ist zu beachten, dass Methoden zur Ermittlung von Werten, also \verb|sum()| bei \verb|Adder|- sowie \verb|get()| und \verb|getThenReset()| bei \verb|Accumulator|-Klassen, mit jedem Aufruf über alle Zellen iterieren und parallel stattfindende Schreibzugriffe nicht berücksichtigen.
+
+
+\section{Threadsichere Collections}
+\label{sec:collections}
+
+\textit{Collections} aus dem Paket \verb|java.util| sind im Allgemeinen nicht threadsicher.
+Ihre Algorithmen garantieren keine konsistenten Datenbestände und vorhersehbares Verhalten, sobald Threads parallel Elemente hinzufügen oder entfernen.
+Das Paket \verb|java.util.concurrent| enthält deshalb threadsichere Implementierungen und Erweiterungen der Java \textit{Collections}.
+Methodenumfang sowie Verwendung threadsicherer und nicht-threadsicherer \textit{Collections} ähneln sich entsprechend.
+Es gilt jedoch einige Besonderheiten und Eigenschaften zu beachten, die im Folgenden erläutert werden.
+
+\subsection{Blockierende und nicht-blockierende Methoden}
+\label{subsec:collections:methods}
+
+Threadsichere \textit{Collections} weisen blockierendes und nicht-blockierendes Verhalten auf.
+Rufende Threads verweilen in blockierenden Methoden, bis diese ihre jeweilige Aktion ausführen können.
+Nicht-blockierende Methoden verfolgen einen anderen Ansatz.
+Ist ihre Ausführung zum Zeitpunkt des Aufrufs nicht umsetzbar, werden implementierungsabhängig \textit{Exceptions} geworfen oder \verb|null|- beziehungsweise \verb|false|-Werte zurückgegeben.
+
+\subsection{Konzepte}
+\label{subsec:collections:concepts}
+
+Auf Grund des gro"sen Methodenumfangs threadsicherer \textit{Collections} werden an dieser Stelle nur ihre verschiedenen Konzepte vorgestellt und die Klassen nicht im Detail betrachtet.
+Auch auf die Verwendung von \textit{Collections} im Allgemeinen wird nicht näher eingegangen.
+Informationen zu spezifischen \textit{Collections} können der ausführlichen Java-Dokumentation entnommen werden.
+Im Folgenden werden die threadsicheren \textit{Collections} der Standardbibliothek, nach ihren Hauptkonzepten gruppiert, vorgestellt.
+Besondere Konzepte werden separat betrachtet.
+
+\subsubsection{Blocking}
+\label{subsubsec:collections:concepts:blocking}
+
+\verb|LinkedBlockingQueue|, \verb|PriorityBlockingQueue| und \verb|ArrayBlockingQueue| sowie \verb|LinkedBlockingDeque| sind threadsichere Implementierungen des \textit{Interfaces} \verb|BlockingQueue|.
+Zugriffe werden mit Hilfe von \verb|ReentrantLock| synchronisiert.
+\verb|put|-Methoden blockieren, bis Warteschlangen Platz für hinzuzufügende Elemente haben.
+Aufrufer von \verb|take|-Methoden sind blockiert, bis ein Element entnommen werden kann.
+Für nicht-""blockierendes Verhalten sowie Aufrufe mit \textit{Timeouts} stehen \verb|poll|- und \verb|offer|-Warteschlangenmethoden zur Verfügung.
+Diese Klassen eignen sich dementsprechend für Algorithmen, bei denen blockierendes Hinzufügen oder Entnehmen von Elementen aus Warteschlangen benötigt wird.
+
+\subsubsection{Concurrent}
+\label{subsubsec:collections:concepts:concurrent}
+
+Die Threadsicherheit von \verb|Concurrent|-Klassen basiert auf \textit{Variable Handles} und deren \textit{Compare-and-Set}-Mechanismen\footnote{\verb|ConcurrentHashMap| verwendet die Klasse \verb|Unsafe| mit vergleichbaren Mechanismen.}.
+Dadurch wird der von anderen Synchronisationsmechanismen verursachte \textit{Overhead} vermieden, jedoch entfällt auch blockierendes Verhalten.
+Bezüglich ihrer Verwendung unterscheiden sich reguläre \textit{Collections} und ihre entsprechenden \verb|Concurrent|-Varianten deshalb nur in ihrer Threadsicherheit.
+Neben \textit{Compare-and-Set}-Mechanismen verwenden \verb|Concurrent|-Klassen verschiedene Algorithmen, um auch bei vielen parallelen Zugriffen performant zu bleiben.
+
+\verb|ConcurrentLinkedQueue| und \verb|ConcurrentLinkedDeque| sind für Algorithmen mit Warteschlangen geeignet, welche kein blockierendes Verhalten benötigen und minimalen \textit{Overhead} voraussetzen.
+
+\verb|ConcurrentSkipListMap| sowie \verb|ConcurrentSkipListSet| sind navigierbare sortierte \textit{Collections}.
+Über ihre Sortierungskriterien können sie geordnete \verb|SubMaps| beziehungsweise Teilmengen erzeugen.
+
+Wird Navigierbarkeit nicht vorausgesetzt, kann \verb|ConcurrentHashMap| verwendet werden.
+Diese Klasse verfügt zudem über Methoden, welche den \verb|ForkJoinPool| verwenden, um Operationen zu parallelisieren.
+\verb|forEach()|, \verb|search()|, \verb|reduce()| und weitere Varianten dieser Methoden lassen sich so threadsicher und performant ausführen.
+
+\subsubsection{CopyOnWrite}
+\label{subsubsec:collections:concepts:copyonwrite}
+
+\verb|CopyOnWriteArrayList| und \verb|CopyOnWriteArraySet| führen Schreibzugriffe auf einer Kopie ihrer internen Arrays aus.
+Bisherige Arrays werden anschließend mit erzeugten Kopien ausgetauscht.
+Schreibzugriffe sind kritische Abschnitte und werden von \verb|synchronized|-Blöcken geschützt.
+Das Kopieren von Arrays ist aufwendig, weshalb sich beide Klassen nicht für Programme mit vielen Schreibzugriffen eignen.
+Ihre Iteratoren verwenden nur das Array, welches bei ihrer Instanziierung vorlag.
+Dementsprechend sind nebenläufige Veränderungen der Iteratoren ausgeschlossen.
+\verb|CopyOnWrite|-Klassen eignen sich deshalb für Programme, die wenig Daten einfügen, aber oft über diese iterieren müssen.
+
+\subsubsection{Delay}
+\label{subsubsec:collections:concepts:delay}
+
+Die Klasse \verb|DelayQueue| implementiert \verb|BlockingQueue| und ermöglicht Zugriffe auf ihre Elemente erst nachdem deren \textit{Delay} abgelaufen ist.
+Ihre generische Typen müssen das \textit{Interface} \verb|Delayed| implementieren.
+Dieses erweitert \verb|Comparable<Delayed>| und verfügt über eine Methode, die eine Zeiteinheit erhält und das verbleibende \textit{Delay} in Form eines \verb|long|-Wertes zurückgibt.
+Elemente werden aufsteigend nach ihrem Ablaufdatum entnommen.
+Sollte sich kein Element mit abgelaufenem \textit{Delay} in der Warteschlange befinden, werden lesende Zugriffe blockiert, bis ein solches Element verfügbar ist.
+Analog zu anderen blockierenden \textit{Collections} kann bei diesen Methoden ein \textit{Timeout} definiert werden.
+Zur Sicherung kritischer Abschnitte wird \verb|ReentrantLock| verwendet.
+
+\subsubsection{Synchronous}
+\label{subsubsec:collections:concepts:synchronous}
+
+\verb|SynchronousQueue|, eine Implementierung von \verb|BlockingQueue|, ermöglicht synchrone Verwendung einer Warteschlange ohne Kapazität.
+"`Einfügen"' erfolgt nur dann, wenn ein Abnehmer bereits auf ein Element wartet.
+Analog dazu ist "`Entnehmen"' von Elementen nur möglich, wenn ein anderer Thread am "`Einfügen"' ist.
+Mit \verb|put()| und \verb|take()| findet dies blockierend statt.
+\verb|poll()| und \verb|offer()| blockieren nur, wenn ein \textit{Timeout} festgelegt wird.
+Im Kontext anderer Methoden fungiert \verb|SynchronousQueue| als leere \textit{Collection}.
+Des Weiteren legt sie keine Wartereihenfolge für Zugriffe fest, kann jedoch als fair initialisiert werden und verwendet dann das \textit{FIFO}-Prinzip.
+Die Threadsicherheit von \verb|SynchronousQueue| basiert auf \textit{Variable Handles}.
+Ihr blockierendes Verhalten entsteht durch Warte-Algorithmen.
+
+\subsubsection{Transfer}
+\label{subsubsec:collections:concepts:transfer}
+
+Ihrem Name entsprechend eignen sich \textit{Transfer-Collections} zum Datenaustausch zwischen Threads, also beispielsweise für Erzeuger-""Verbraucher-""Probleme.
+Seit Java 7 steht dafür das Interface \verb|TransferQueue|, eine Erweiterung von \verb|BlockingQueue|, und dessen Implementierung \verb|LinkedTransferQueue| zur Verfügung.
+\verb|transfer()| blockiert Erzeuger, bis übergebene Elemente von Verbrauchern empfangen wurden.
+Alternativ kann mit \verb|tryTransfer()| ein \textit{Timeout} definiert oder ein sofortiges Einfügen versucht werden.
+Informationen über wartende Verbraucher können mit \verb|hasWaitingConsumer()| und \verb|getWaitingConsumerCount()| abgefragt werden.
+Die Threadsicherheit aller Operationen wird durch Verwendung von \textit{Variable Handles} garantiert.
+Warte-Algorithmen ermöglichen blockierendes Verhalten.
+
+\subsection{Synchronized-Collections}
+\label{subsec:collections:synchronized}
+
+Über statische Methoden der Klasse \verb|Collections| aus dem Paket \verb|java.util| können verschiedene threadsichere \textit{Wrapper} für \verb|Set|-, \verb|List|- und \verb|Map|-""Implementierungen erzeugt werden.
+Dafür wird eine Instanz der entsprechenden \textit{Collection} den Methoden übergeben.
+Die Threadsicherheit der \textit{Wrapper} wird dadurch gewährleistet, dass alle relevanten Methoden innerhalb eines \verb|synchronized|-Blocks auf ihre interne \textit{Collection} zugreifen.
+Dementsprechend groß ist der \textit{Overhead} dieser \textit{Wrapper}.
+Ferner sind ihre Iteratoren und \textit{Streams} nicht threadsicher.
+
+\subsection{Anwendungsbeispiel}
+\label{subsec:collections:example}
+
+Basierend auf den \textit{Interfaces} \verb|ConcurrentMap| und \verb|BlockingQueue| sowie der Klasse \verb|ConcurrentLinkedQueue| wird in \autoref{lst:collections:example} ein threadsicherer \textit{Request Handler} implementiert, wie er in einem \textit{Webservice} zum Einsatz kommen kann.
+Dieser wartet auf neue Anfragen an der blockierenden Warteschlange \verb|requestQueue| (siehe Zeilen 13 und 25).
+Anschließend wird die threadsichere \textit{Map} \verb|resultMap| zum Generieren oder Lesen von Antworten verwendet (siehe Zeilen 15 und 27).
+Zuletzt fügt er abgearbeitete Anfragen, an dieser Stelle um berechnete Antworten erweitert, nicht-blockierend in \verb|finishedQueue| ein (siehe Zeilen 14, 28 und 29).
+
+\begin{lstfloat}
+	\begin{lstlisting}[label={lst:collections:example}, caption={Request Handler mit Ergebnisspeicherung}]
+import java.util.concurrent.*;
+
+class Request {
+	final String query;
+	final String origin;
+	private Response response = null;
+	// query und origin Konstruktor, response-Getter/Setter
+}
+
+class Response { /* Implementierung */ }
+
+class RequestHandler implements Runnable {
+	private BlockingQueue<Request> requestQueue;
+	private ConcurrentLinkedQueue<Request> finishedQueue;
+	private ConcurrentMap<String, Response> resultMap;
+	// All-Args-Constructor
+	
+	private Response getResponse(final String query) {
+		return new Response(); // Vereinfachtes Beispiel
+	}
+	
+	@Override public void run() {
+		try {
+			while (!Thread.currentThread().isInterrupted()) {
+				Request req = requestQueue.take(); // Blockierend
+				Response res = 
+					resultMap.computeIfAbsent(req.query, this::getResponse);
+				req.setResponse(res);
+				finishedQueue.add(req); // Nicht-blockierend
+			}
+		} catch (InterruptedException e) { /* Ausnahmebehandlung */ }
+	}
+}
+	\end{lstlisting}
+\end{lstfloat}
+
+
+\section{Zusammenfassung}
+\label{sec:summary}
+
+Das Java Speichermodell bildet die Grundlage für threadsichere Datenstrukturen, da es unter anderem Sichtbarkeit und Reihenfolge von Zugriffen festlegt.
+\verb|volatile|-Zugriffe finden sequentiell statt und sind für alle Threads sichtbar.
+Um Wettlaufsituationen zu vermeiden müssen Zugriffe zudem synchronisiert werden.
+Gängige Mittel dafür sind \verb|Locks|, unter anderem in Form von \verb|synchronized|-Blöcken, und \textit{Compare-and-Set}-Mechanismen.
+Die Java Standardbibliothek bietet threadsichere Datenstrukturen für verschiedene Einsatzzwecke.
+Von \verb|Atomic|-Klassen für einzelne Werte oder Referenzen bis hin zu \textit{Collections} mit unterschiedlichem Verhalten stehen viele Implementierungen zur Verfügung.
+Sollten threadsichere Datenstrukturen benötigt werden, welche nicht in der Standardbibliothek enthalten sind, können \textit{Variable Handles} verwendet werden, um diese Strukturen zu implementieren.
+Darüber hinaus ermöglichen \textit{Variable Handles} eine threadsichere Verwendung regulärer Attribute und Arrays.
+
+\printbibliography[title={Referenzen}]
+
+%\printbibliography[title={Literatur}, keyword={main}]
+%\printbibliography[title={Dokumentation}, keyword={documentation}]
+
+\end{document}
